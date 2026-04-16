@@ -1,7 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// Planificación de Desplazamientos Laborales — FOR-SSTA-218
+// Schema Prisma 7 | PostgreSQL (Supabase)
 
 generator client {
   provider = "prisma-client"
@@ -10,4 +8,448 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Rol {
+  CONDUCTOR
+  OPERACIONES
+  ADMIN
+}
+
+enum EstadoDesplazamiento {
+  BORRADOR
+  EN_REVISION
+  APROBADO
+  RECHAZADO
+  ARCHIVADO
+}
+
+enum TipoVehiculo {
+  CARGA_PESADA
+  TRANSPORTE_PERSONAL
+  MOTO
+  TRANSPORTE_PUBLICO
+}
+
+enum VarianteLimiteVelocidad {
+  UNICA // KM_PERMITIDO único — Ruta Bloque Cubiro
+  DUAL  // CARGADO + DESCARGADO — demás rutas
+}
+
+enum ZonaVelocidad {
+  LOCACIONES
+  VIA_DESTAPADA
+  VIA_PAVIMENTADA
+  AREAS_URBANAS
+  ZONA_ESCOLAR
+  DESCENSOS_PELIGROSOS
+  OTRO_REQUISITOS_CLIENTE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USUARIOS Y AUTENTICACIÓN
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // bcrypt hash
+  nombre    String
+  rol       Rol      @default(CONDUCTOR)
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  desplazamientos Desplazamiento[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLAS DE RUTAS
+// Almacena el contenido pre-cargado de cada ruta (secciones 2-14).
+// Al crear un Desplazamiento, la API copia estos datos como valores iniciales.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RutaPlantilla {
+  id                      String                  @id @default(cuid())
+  nombre                  String
+  descripcion             String?
+  varianteLimiteVelocidad VarianteLimiteVelocidad @default(DUAL)
+  activa                  Boolean                 @default(true)
+  planoRutaUrl            String?                 // Supabase Storage — Sección 14
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  // Sección 2 — Ruta Principal (referencia)
+  kmsPavimentados       Float?
+  kmsDestapados         Float?
+  municipiosAtravesados String?  @db.Text
+
+  // Sección 3 — Rutas Alternas
+  rutaAlternaDescripcion String? @db.Text
+
+  // Sección 9 — Recomendaciones fijas
+  recViasDestapadas       String? @db.Text
+  recZonasUrbanas         String? @db.Text
+  recCurvasPeligrosas     String? @db.Text
+  recIntersecciones       String? @db.Text
+  recPuentesFuenteHidrica String? @db.Text
+  recTramosRectos         String? @db.Text
+
+  // Sección 13 — Puntos críticos de seguridad
+  puntosCriticosSeguridad String? @db.Text
+
+  // Tablas pre-cargadas (secciones 4-8, 10-12)
+  rutasBloqueadas     RutaBloqueadaPlantilla[]
+  limitesVelocidad    LimiteVelocidadPlantilla[]
+  sitiosPernocte      SitioPernocrePlantilla[]
+  puestosControl      PuestoControlPlantilla[]
+  puntosCriticos      PuntoCriticoPlantilla[]
+  puntosApoyo         PuntoApoyoPlantilla[]
+  contactosEmergencia ContactoEmergenciaPlantilla[]
+  estacionesServicio  EstacionServicioPlantilla[]
+
+  desplazamientos Desplazamiento[]
+
+  @@map("rutas_plantilla")
+}
+
+// Sección 4 — Rutas Bloqueadas/Restringidas (plantilla)
+model RutaBloqueadaPlantilla {
+  id          String        @id @default(cuid())
+  descripcion String        @db.Text
+  orden       Int           @default(0)
+
+  rutaId      String
+  ruta        RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("rutas_bloqueadas_plantilla")
+}
+
+// Sección 5 — Límites de Velocidad (plantilla)
+model LimiteVelocidadPlantilla {
+  id                  String        @id @default(cuid())
+  zona                ZonaVelocidad
+  kmPermitido         Float?        // variante UNICA
+  velocidadCargado    Float?        // variante DUAL
+  velocidadDescargado Float?        // variante DUAL
+  requisito           String?
+
+  rutaId              String
+  ruta                RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@unique([rutaId, zona])
+  @@map("limites_velocidad_plantilla")
+}
+
+// Sección 6 — Sitios autorizados para detenerse/pernoctar (plantilla)
+model SitioPernocrePlantilla {
+  id         String        @id @default(cuid())
+  km         Float
+  nombre     String
+  municipio  String
+  servicios  String?
+  orden      Int           @default(0)
+
+  rutaId     String
+  ruta       RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("sitios_pernocte_plantilla")
+}
+
+// Sección 7 — Puestos de control (plantilla)
+model PuestoControlPlantilla {
+  id        String        @id @default(cuid())
+  km        Float
+  nombre    String
+  municipio String
+  servicios String?
+  orden     Int           @default(0)
+
+  rutaId    String
+  ruta      RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("puestos_control_plantilla")
+}
+
+// Sección 8 — Puntos críticos de la ruta (plantilla)
+model PuntoCriticoPlantilla {
+  id          String        @id @default(cuid())
+  kmDesde     Float
+  kmHasta     Float
+  sentido     String
+  descripcion String        @db.Text
+  orden       Int           @default(0)
+
+  rutaId      String
+  ruta        RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("puntos_criticos_plantilla")
+}
+
+// Sección 10 — Puntos de apoyo para emergencias (plantilla)
+model PuntoApoyoPlantilla {
+  id                String        @id @default(cuid())
+  entidad           String
+  ubicacion         String
+  telefono          String
+  equiposDisponibles String?
+  pd                String?       // "P" = Propio, "D" = Disponible
+  responsable       String?
+  orden             Int           @default(0)
+
+  rutaId            String
+  ruta              RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("puntos_apoyo_plantilla")
+}
+
+// Sección 11 — Directorio telefónico emergencias (plantilla)
+model ContactoEmergenciaPlantilla {
+  id      String        @id @default(cuid())
+  entidad String        // "BOMBEROS", "CRUZ ROJA", etc.
+  area    String?
+  telefono String
+  orden   Int           @default(0)
+
+  rutaId  String
+  ruta    RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("contactos_emergencia_plantilla")
+}
+
+// Sección 12 — Estaciones de servicio y talleres (plantilla)
+model EstacionServicioPlantilla {
+  id      String        @id @default(cuid())
+  entidad String
+  area    String?
+  telefono String
+  orden   Int           @default(0)
+
+  rutaId  String
+  ruta    RutaPlantilla @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@map("estaciones_servicio_plantilla")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DESPLAZAMIENTOS
+// Formulario diligenciado. Completamente autónomo — no depende de la plantilla
+// en tiempo de lectura (los datos se copian al crearlo).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Desplazamiento {
+  id            String               @id @default(cuid())
+  codigo        String               @unique // ej: DES-2026-0001
+  estado        EstadoDesplazamiento @default(BORRADOR)
+  observaciones String?              @db.Text // feedback de Operaciones al rechazar
+
+  rutaId        String
+  ruta          RutaPlantilla        @relation(fields: [rutaId], references: [id])
+
+  conductorId   String
+  conductor     User                 @relation(fields: [conductorId], references: [id])
+
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  // ── Sección 1 — Datos Generales ────────────────────────────────────────────
+  motivoDesplazamiento    String       @db.Text
+  tiempoAntelacion        String
+  rutaPrincipalNombre     String
+  tiempoTraslado          String
+  recorridoKms            Float
+  rutaAlternaNombre       String?
+  tiempoTrasladoAlterno   String?
+  horaSalida              String       // "HH:mm"
+  horaLlegada             String       // "HH:mm"
+  novedades               String?      @db.Text
+  preoperacionalRealizado Boolean      @default(false)
+  documentacionVerificada Boolean      @default(false)
+  tipoVehiculo            TipoVehiculo
+  transportaProducto      Boolean      @default(false)
+  cualProducto            String?
+
+  // ── Sección 2 — Ruta Principal ─────────────────────────────────────────────
+  kmsPavimentados       Float
+  kmsDestapados         Float
+  kmsTotales            Float         // calculado: pavimentados + destapados
+  municipiosAtravesados String?       @db.Text
+
+  // ── Sección 3 — Rutas Alternas ─────────────────────────────────────────────
+  rutasAlternasDescripcion String?    @db.Text
+
+  // ── Sección 9 — Recomendaciones ────────────────────────────────────────────
+  recViasDestapadas       String?     @db.Text
+  recZonasUrbanas         String?     @db.Text
+  recCurvasPeligrosas     String?     @db.Text
+  recIntersecciones       String?     @db.Text
+  recPuentesFuenteHidrica String?     @db.Text
+  recTramosRectos         String?     @db.Text
+
+  // ── Sección 13 — Puntos Críticos de Seguridad ──────────────────────────────
+  puntosCriticosSeguridad String?     @db.Text
+
+  // ── Sección 14 — Planos de la Ruta ─────────────────────────────────────────
+  planoRutaUrl            String?     // copiado de RutaPlantilla al crear
+
+  // ── Tablas relacionadas (secciones 4-8, 10-12) ─────────────────────────────
+  rutasBloqueadas     RutaBloqueada[]
+  limitesVelocidad    LimiteVelocidad[]
+  sitiosPernocte      SitioPernocte[]
+  puestosControl      PuestoControl[]
+  puntosCriticos      PuntoCritico[]
+  puntosApoyo         PuntoApoyo[]
+  contactosEmergencia ContactoEmergencia[]
+  estacionesServicio  EstacionServicio[]
+
+  // ── Firmas ─────────────────────────────────────────────────────────────────
+  firmas Firma[]
+
+  @@map("desplazamientos")
+}
+
+// Sección 4 — Rutas Bloqueadas/Restringidas (desplazamiento)
+model RutaBloqueada {
+  id              String         @id @default(cuid())
+  descripcion     String         @db.Text
+  orden           Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("rutas_bloqueadas")
+}
+
+// Sección 5 — Límites de Velocidad (desplazamiento)
+model LimiteVelocidad {
+  id                  String         @id @default(cuid())
+  zona                ZonaVelocidad
+  kmPermitido         Float?         // variante UNICA
+  velocidadCargado    Float?         // variante DUAL
+  velocidadDescargado Float?         // variante DUAL
+  requisito           String?
+
+  desplazamientoId    String
+  desplazamiento      Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@unique([desplazamientoId, zona])
+  @@map("limites_velocidad")
+}
+
+// Sección 6 — Sitios autorizados para detenerse/pernoctar (desplazamiento)
+model SitioPernocte {
+  id         String         @id @default(cuid())
+  km         Float
+  nombre     String
+  municipio  String
+  servicios  String?
+  orden      Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("sitios_pernocte")
+}
+
+// Sección 7 — Puestos de control (desplazamiento)
+model PuestoControl {
+  id        String         @id @default(cuid())
+  km        Float
+  nombre    String
+  municipio String
+  servicios String?
+  orden     Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("puestos_control")
+}
+
+// Sección 8 — Puntos críticos de la ruta (desplazamiento)
+model PuntoCritico {
+  id          String         @id @default(cuid())
+  kmDesde     Float
+  kmHasta     Float
+  sentido     String
+  descripcion String         @db.Text
+  orden       Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("puntos_criticos")
+}
+
+// Sección 10 — Puntos de apoyo para emergencias (desplazamiento)
+model PuntoApoyo {
+  id                 String         @id @default(cuid())
+  entidad            String
+  ubicacion          String
+  telefono           String
+  equiposDisponibles String?
+  pd                 String?
+  responsable        String?
+  orden              Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("puntos_apoyo")
+}
+
+// Sección 11 — Directorio telefónico emergencias (desplazamiento)
+model ContactoEmergencia {
+  id       String         @id @default(cuid())
+  entidad  String
+  area     String?
+  telefono String
+  orden    Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("contactos_emergencia")
+}
+
+// Sección 12 — Estaciones de servicio y talleres (desplazamiento)
+model EstacionServicio {
+  id       String         @id @default(cuid())
+  entidad  String
+  area     String?
+  telefono String
+  orden    Int            @default(0)
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@map("estaciones_servicio")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIRMAS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Firma {
+  id       String      @id @default(cuid())
+  tipo     TipoFirma
+  dataUrl  String      @db.Text // data:image/png;base64,... (signature_pad output)
+  firmadoEn DateTime   @default(now())
+
+  desplazamientoId String
+  desplazamiento   Desplazamiento @relation(fields: [desplazamientoId], references: [id], onDelete: Cascade)
+
+  @@unique([desplazamientoId, tipo])
+  @@map("firmas")
+}
+
+enum TipoFirma {
+  CONDUCTOR
+  OPERACIONES
 }
